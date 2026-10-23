@@ -5,9 +5,9 @@
 	"name": "Lands Map Bridge",
 	"description": "Shows Lands claims on Xaero's Minimap and World Map and lets you claim or unclaim chunks from the world map.",
 	"authors": [
-		"Collin"
+		"CollinToGo"
 	],
-	"license": "All-Rights-Reserved",
+	"license": "MIT",
 	"icon": "assets/landsmapbridge/icon.png",
 	"environment": "client",
 	"entrypoints": {

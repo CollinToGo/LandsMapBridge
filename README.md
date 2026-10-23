@@ -65,3 +65,9 @@ Requires nothing but a JDK; Gradle downloads Java 25 by itself.
 - `common/` holds the small wire protocol shared by both sides (plain plugin messages on `landsmapbridge:*` channels).
 - The plugin keeps a copy of all claims. When Lands reports a change it reads only that land again and sends the difference to mod clients.
 - The mod hooks a highlighter into Xaero's minimap and world map (the same system Open Parties and Claims uses) and adds its options to the world map's right-click menu.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
+
+This project contains no code from Lands or Xaero's maps. Lands is a paid plugin: every server needs its own Lands license. Xaero's Minimap and World Map are downloaded from Modrinth when building.

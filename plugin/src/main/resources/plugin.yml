@@ -2,5 +2,6 @@ name: LandsMapBridge
 main: de.landsmapbridge.plugin.LandsMapBridgePlugin
 version: '${version}'
 api-version: '26.3'
+author: CollinToGo
 description: Sends Lands claims to players using the Lands Map Bridge mod for Xaero's maps.
 depend: [Lands]
