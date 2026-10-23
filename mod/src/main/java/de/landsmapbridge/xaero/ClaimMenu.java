@@ -27,10 +27,21 @@ public final class ClaimMenu {
         if (!ClaimStore.INSTANCE.isConnected() || selection == null || dimension == null) {
             return;
         }
-        int width = selection.getRight() - selection.getLeft() + 1;
-        int height = selection.getBottom() - selection.getTop() + 1;
-        int area = width * height;
-        int max = ClaimStore.INSTANCE.maxClaimArea();
+        if (selection.getLeft() > selection.getRight() || selection.getTop() > selection.getBottom()) {
+            return;
+        }
+        long width = (long) selection.getRight() - (long) selection.getLeft() + 1L;
+        long height = (long) selection.getBottom() - (long) selection.getTop() + 1L;
+        if (width <= 0 || height <= 0) {
+            return;
+        }
+        long area;
+        try {
+            area = Math.multiplyExact(width, height);
+        } catch (ArithmeticException e) {
+            area = Long.MAX_VALUE;
+        }
+        long max = ClaimStore.INSTANCE.maxClaimArea();
         if (area > max) {
             options.add(new RightClickOption("gui.landsmapbridge.too_large", Style.EMPTY.withColor(ChatFormatting.RED), options.size(), screen) {
                 @Override
@@ -44,7 +55,7 @@ public final class ClaimMenu {
     }
 
     private static RightClickOption option(GuiMap screen, int index, ResourceKey<Level> dimension, MapTileSelection selection,
-                                           int area, boolean unclaim) {
+                                           long area, boolean unclaim) {
         // Copy the bounds now; the selection is cleared when the menu closes.
         Protocol.ClaimRequest request = new Protocol.ClaimRequest(dimension.identifier().toString(), unclaim,
                 selection.getLeft(), selection.getTop(), selection.getRight(), selection.getBottom());

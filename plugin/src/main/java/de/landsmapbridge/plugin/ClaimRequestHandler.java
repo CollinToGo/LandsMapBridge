@@ -3,6 +3,8 @@ package de.landsmapbridge.plugin;
 import de.landsmapbridge.protocol.Protocol;
 import me.angeschossen.lands.api.LandsIntegration;
 import me.angeschossen.lands.api.flags.type.Flags;
+import me.angeschossen.lands.api.land.Area;
+import me.angeschossen.lands.api.land.Container;
 import me.angeschossen.lands.api.land.Land;
 import me.angeschossen.lands.api.player.LandPlayer;
 import me.angeschossen.lands.api.player.Selection;
@@ -47,7 +49,8 @@ final class ClaimRequestHandler {
         if (request.minX() > request.maxX() || request.minZ() > request.maxZ()) {
             return;
         }
-        if (request.area() > plugin.maxClaimArea()) {
+        long area = request.area();
+        if (area <= 0 || area > plugin.maxClaimArea()) {
             fail(player, "You can select at most " + plugin.maxClaimArea() + " chunks at once.");
             return;
         }
@@ -81,7 +84,7 @@ final class ClaimRequestHandler {
         }
 
         int before = countOwned(land, world, request);
-        int target = request.unclaim() ? before : (int) request.area() - before;
+        int target = request.unclaim() ? before : (int) area - before;
         if (target == 0) {
             busy.remove(player.getUniqueId());
             fail(player, request.unclaim() ? "None of these chunks belong to " + land.getName() + "."
@@ -97,24 +100,62 @@ final class ClaimRequestHandler {
 
     private void claim(Player player, LandPlayer landPlayer, Land land, World world, Protocol.ClaimRequest request, int before) {
         double y = player.getLocation().getY();
-        Selection selection = Selection.of(landPlayer, false, false, false);
-        selection.setPos1(new Location(world, request.minX() << 4, y, request.minZ() << 4));
-        selection.setPos2(new Location(world, (request.maxX() << 4) + 15, y, (request.maxZ() << 4) + 15));
-        selection.claim(land, true, false).whenComplete((result, error) -> Bukkit.getScheduler().runTask(plugin, () -> {
-            selection.disable();
-            if (error != null) {
-                plugin.getLogger().warning("Selection claim failed: " + error);
+        Selection selection = null;
+        boolean scheduled = false;
+        try {
+            selection = Selection.of(landPlayer, false, false, false);
+            selection.setPos1(new Location(world, request.minX() << 4, y, request.minZ() << 4));
+            selection.setPos2(new Location(world, (request.maxX() << 4) + 15, y, (request.maxZ() << 4) + 15));
+            Selection finalSelection = selection;
+            selection.claim(land, true, false).whenComplete((result, error) -> Bukkit.getScheduler().runTask(plugin, () -> {
+                finalSelection.disable();
+                if (error != null) {
+                    plugin.getLogger().warning("Selection claim failed: " + error);
+                }
+                int claimed = countOwned(land, world, request) - before;
+                finish(player, land, false, claimed, (int) request.area() - before);
+            }));
+            scheduled = true;
+        } catch (Exception e) {
+            plugin.getLogger().warning("Selection claim failed: " + e);
+            fail(player, "Claim failed: " + e.getMessage());
+        } finally {
+            if (!scheduled) {
+                if (selection != null) {
+                    try {
+                        selection.disable();
+                    } catch (Throwable ignored) {
+                    }
+                }
+                busy.remove(player.getUniqueId());
             }
-            int claimed = countOwned(land, world, request) - before;
-            finish(player, land, false, claimed, (int) request.area() - before);
-        }));
+        }
+    }
+
+    private boolean canUnclaimChunk(Player player, Land land, World world, int chunkX, int chunkZ) {
+        if (!land.hasChunk(world, chunkX, chunkZ)) {
+            return false;
+        }
+        Container container = land.getContainer(world);
+        if (container != null) {
+            Collection<? extends Area> areas = container.getAreasInChunk(chunkX, chunkZ, true);
+            if (areas != null && !areas.isEmpty()) {
+                for (Area area : areas) {
+                    if (!area.hasRoleFlag(player.getUniqueId(), Flags.LAND_CLAIM)) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+        }
+        return land.getDefaultArea().hasRoleFlag(player.getUniqueId(), Flags.LAND_CLAIM);
     }
 
     private void unclaim(Player player, LandPlayer landPlayer, Land land, World world, Protocol.ClaimRequest request, int owned) {
         Deque<int[]> todo = new ArrayDeque<>();
         for (int x = request.minX(); x <= request.maxX(); x++) {
             for (int z = request.minZ(); z <= request.maxZ(); z++) {
-                if (land.hasChunk(world, x, z)) {
+                if (land.hasChunk(world, x, z) && canUnclaimChunk(player, land, world, x, z)) {
                     todo.add(new int[]{x, z});
                 }
             }
@@ -128,10 +169,19 @@ final class ClaimRequestHandler {
             finish(player, land, true, done, total);
             return;
         }
-        land.unclaimChunk(world, chunk[0], chunk[1], landPlayer).whenComplete((result, error) -> Bukkit.getScheduler().runTask(plugin, () -> {
-            boolean removed = error == null && !land.hasChunk(world, chunk[0], chunk[1]);
-            unclaimNext(player, landPlayer, land, world, todo, removed ? done + 1 : done, total);
-        }));
+        if (!canUnclaimChunk(player, land, world, chunk[0], chunk[1])) {
+            unclaimNext(player, landPlayer, land, world, todo, done, total);
+            return;
+        }
+        try {
+            land.unclaimChunk(world, chunk[0], chunk[1], landPlayer).whenComplete((result, error) -> Bukkit.getScheduler().runTask(plugin, () -> {
+                boolean removed = error == null && !land.hasChunk(world, chunk[0], chunk[1]);
+                unclaimNext(player, landPlayer, land, world, todo, removed ? done + 1 : done, total);
+            }));
+        } catch (Exception e) {
+            plugin.getLogger().warning("Failed to unclaim chunk: " + e);
+            finish(player, land, true, done, total);
+        }
     }
 
     private void finish(Player player, Land land, boolean unclaim, int done, int total) {

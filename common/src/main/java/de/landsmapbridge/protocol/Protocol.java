@@ -162,7 +162,19 @@ public final class Protocol {
         }
 
         public long area() {
-            return (long) (maxX - minX + 1) * (maxZ - minZ + 1);
+            if (minX > maxX || minZ > maxZ) {
+                return 0;
+            }
+            long width = (long) maxX - (long) minX + 1L;
+            long height = (long) maxZ - (long) minZ + 1L;
+            if (width <= 0 || height <= 0) {
+                return 0;
+            }
+            try {
+                return Math.multiplyExact(width, height);
+            } catch (ArithmeticException e) {
+                return Long.MAX_VALUE;
+            }
         }
     }
 

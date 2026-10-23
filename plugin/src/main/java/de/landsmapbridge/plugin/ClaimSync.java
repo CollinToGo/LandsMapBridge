@@ -79,21 +79,40 @@ final class ClaimSync {
      * marks lands that differ (or appeared or vanished) for a full read.
      */
     void checkAll() {
-        Set<Integer> seen = new HashSet<>();
-        for (Land land : lands.getLands()) {
-            int id = landId(land);
-            seen.add(id);
-            Integer count = landChunkCounts.get(id);
-            if (count == null || count != land.getChunksAmount()) {
-                changedLands.add(land.getULID());
+        try {
+            Set<Integer> seen = new HashSet<>();
+            Set<ULID> activeUlids = new HashSet<>();
+            Set<UUID> activeOwners = new HashSet<>();
+            for (Land land : lands.getLands()) {
+                int id = landId(land);
+                seen.add(id);
+                activeUlids.add(land.getULID());
+                UUID owner = land.getOwnerUID();
+                if (owner != null) {
+                    activeOwners.add(owner);
+                }
+                Integer count = landChunkCounts.get(id);
+                if (count == null || count != land.getChunksAmount()) {
+                    changedLands.add(land.getULID());
+                }
             }
-        }
-        for (Integer id : landChunks.keySet()) {
-            if (!seen.contains(id)) {
-                changedLands.add(ulidsById.get(id));
+            for (Integer id : landChunks.keySet()) {
+                if (!seen.contains(id)) {
+                    ULID ulid = ulidsById.get(id);
+                    if (ulid != null) {
+                        changedLands.add(ulid);
+                    }
+                }
             }
+            // Evict deleted lands that have no chunks pending removal
+            ulidsById.keySet().removeIf(id -> !seen.contains(id) && !landChunks.containsKey(id));
+            landIds.keySet().removeIf(ulid -> !activeUlids.contains(ulid) && !changedLands.contains(ulid));
+            // Evict owners of deleted lands
+            ownerNames.keySet().retainAll(activeOwners);
+            infosChanged = true;
+        } catch (Exception e) {
+            plugin.getLogger().warning("Error in claim sync checkAll: " + e.getMessage());
         }
-        infosChanged = true;
     }
 
     void forget(Player player) {
@@ -147,33 +166,44 @@ final class ClaimSync {
 
     /** Runs every few ticks; does nothing unless a change was flagged. */
     void flush() {
-        Map<String, Map<Long, Integer>> changes = new HashMap<>();
-        if (!changedLands.isEmpty()) {
-            List<ULID> pending = new ArrayList<>(changedLands);
-            Map<ULID, Map<String, Set<Long>>> reads = new HashMap<>();
-            try {
-                for (ULID ulid : pending) {
-                    Land land = lands.getLandByULID(ulid);
-                    reads.put(ulid, land == null ? Map.of() : readChunks(land));
+        try {
+            Map<String, Map<Long, Integer>> changes = new HashMap<>();
+            if (!changedLands.isEmpty()) {
+                List<ULID> pending = new ArrayList<>(changedLands);
+                Map<ULID, Map<String, Set<Long>>> reads = new HashMap<>();
+                try {
+                    for (ULID ulid : pending) {
+                        Land land = lands.getLandByULID(ulid);
+                        if (land != null) {
+                            landId(land);
+                        }
+                        reads.put(ulid, land == null ? Map.of() : readChunks(land));
+                    }
+                } catch (ConcurrentModificationException e) {
+                    // Lands changes claims off the main thread; try again on the next run.
+                    return;
+                } catch (Exception e) {
+                    // Off-thread Lands activity can cause runtime exceptions; try again next run.
+                    plugin.getLogger().warning("Error reading land chunks: " + e.getMessage());
+                    return;
                 }
-            } catch (ConcurrentModificationException e) {
-                // Lands changes claims off the main thread; try again on the next run.
-                return;
+                pending.forEach(changedLands::remove);
+                reads.forEach((ulid, after) -> apply(landIds.get(ulid), after, changes));
             }
-            pending.forEach(changedLands::remove);
-            reads.forEach((ulid, after) -> apply(landIds.get(ulid), after, changes));
-        }
 
-        List<Player> clients = clients();
-        if (!clients.isEmpty()) {
-            changes.forEach((dimension, entries) -> sendChunks(clients, dimension, false, entries));
-            if (infosChanged) {
-                for (Player player : clients) {
-                    sendLandChanges(player);
+            List<Player> clients = clients();
+            if (!clients.isEmpty()) {
+                changes.forEach((dimension, entries) -> sendChunks(clients, dimension, false, entries));
+                if (infosChanged) {
+                    for (Player player : clients) {
+                        sendLandChanges(player);
+                    }
                 }
             }
+            infosChanged = false;
+        } catch (Exception e) {
+            plugin.getLogger().warning("Error in claim sync flush: " + e.getMessage());
         }
-        infosChanged = false;
     }
 
     /** Stores a land's fresh chunks and records what changed per dimension. */
@@ -199,9 +229,14 @@ final class ClaimSync {
                 }
             }
         }
-        if (after.isEmpty() && lands.getLandByULID(ulidsById.get(id)) == null) {
+        ULID ulid = ulidsById.get(id);
+        if (after.isEmpty() && lands.getLandByULID(ulid) == null) {
             landChunks.remove(id);
             landChunkCounts.remove(id);
+            ulidsById.remove(id);
+            if (ulid != null) {
+                landIds.remove(ulid);
+            }
         } else {
             landChunks.put(id, after);
             landChunkCounts.put(id, after.values().stream().mapToInt(Set::size).sum());
