@@ -23,6 +23,7 @@ import me.angeschossen.lands.api.events.nation.member.NationTrustLandEvent;
 import me.angeschossen.lands.api.events.nation.member.NationUntrustLandEvent;
 import me.angeschossen.lands.api.events.war.WarEndEvent;
 import me.angeschossen.lands.api.events.war.WarStartEvent;
+import me.angeschossen.lands.api.land.Land;
 import org.bukkit.event.Event;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -78,13 +79,20 @@ public final class LandsMapBridgePlugin extends JavaPlugin implements Listener {
 
     private void onLandsEvent(Event event) {
         if (event instanceof LandMergeEvent merge) {
-            sync.landChanged(merge.getLand());
-            sync.landChanged(merge.getToMerge());
+            landChanged(merge.getLand());
+            landChanged(merge.getToMerge());
         } else if (event instanceof LandEvent landEvent) {
-            sync.landChanged(landEvent.getLand());
+            landChanged(landEvent.getLand());
         } else {
             sync.infosChanged();
         }
+    }
+
+    private void landChanged(Land land) {
+        sync.landChanged(land);
+        // Some changes land after their event without one of their own, like the chunks Lands
+        // claims right after a land is created. Read the land once more a second later.
+        getServer().getScheduler().runTaskLater(this, () -> sync.landChanged(land), 20L);
     }
 
     @EventHandler
