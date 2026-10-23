@@ -12,6 +12,7 @@ import me.angeschossen.lands.api.events.LandTrustPlayerEvent;
 import me.angeschossen.lands.api.events.LandUntrustPlayerEvent;
 import me.angeschossen.lands.api.events.PlayerLeaveLandEvent;
 import me.angeschossen.lands.api.events.land.LandConvertEvent;
+import me.angeschossen.lands.api.events.land.LandEvent;
 import me.angeschossen.lands.api.events.land.claiming.LandMergeEvent;
 import me.angeschossen.lands.api.events.land.claiming.LandUnclaimAllEvent;
 import me.angeschossen.lands.api.events.land.create.LandPostCreateEvent;
@@ -64,13 +65,26 @@ public final class LandsMapBridgePlugin extends JavaPlugin implements Listener {
         getServer().getPluginManager().registerEvents(this, this);
         for (Class<? extends Event> type : CHANGE_EVENTS) {
             getServer().getPluginManager().registerEvent(type, this, EventPriority.MONITOR,
-                    (listener, event) -> sync.markDirty(), this, true);
+                    (listener, event) -> onLandsEvent(event), this, true);
         }
 
-        // Pick up changes no event tells us about (admin commands, expired lands, ...).
+        // Load every land once, then pick up changes no event tells us about (admin commands,
+        // expired lands, ...) with a cheap chunk count comparison.
+        sync.checkAll();
         long resyncTicks = Math.max(1, getConfig().getLong("resync-seconds", 30)) * 20L;
-        getServer().getScheduler().runTaskTimer(this, sync::markDirty, resyncTicks, resyncTicks);
+        getServer().getScheduler().runTaskTimer(this, sync::checkAll, resyncTicks, resyncTicks);
         getServer().getScheduler().runTaskTimer(this, sync::flush, 10L, 10L);
+    }
+
+    private void onLandsEvent(Event event) {
+        if (event instanceof LandMergeEvent merge) {
+            sync.landChanged(merge.getLand());
+            sync.landChanged(merge.getToMerge());
+        } else if (event instanceof LandEvent landEvent) {
+            sync.landChanged(landEvent.getLand());
+        } else {
+            sync.infosChanged();
+        }
     }
 
     @EventHandler

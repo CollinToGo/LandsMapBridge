@@ -1,5 +1,6 @@
 # Largest rectangle (in chunks) a player may claim or unclaim at once from the map.
 max-claim-area: 256
 
-# Full re-check of all claims, catches changes Lands sends no event for.
+# How often to compare each land's chunk count, catches changes Lands sends no event for.
+# Only lands whose count changed are read again.
 resync-seconds: 30

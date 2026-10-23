@@ -10,7 +10,6 @@ import me.angeschossen.lands.api.land.Container;
 import me.angeschossen.lands.api.land.Land;
 import me.angeschossen.lands.api.player.LandPlayer;
 import org.bukkit.Bukkit;
-import org.bukkit.OfflinePlayer;
 import org.bukkit.World;
 import org.bukkit.entity.Player;
 
@@ -21,14 +20,13 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Keeps the claim map of every player running the mod up to date. Instead of trusting each
- * Lands event to carry the right data, it rebuilds a snapshot when something changed and
- * only sends the difference.
+ * Keeps the claim map of every player running the mod up to date. Only lands reported as
+ * changed are read again, and only the difference is sent.
  */
 final class ClaimSync {
 
@@ -39,12 +37,22 @@ final class ClaimSync {
     private int nextLandId = 1;
 
     /** Dimension key, then packed chunk position, then land id. */
-    private Map<String, Map<Long, Integer>> chunks = new HashMap<>();
+    private final Map<String, Map<Long, Integer>> chunks = new HashMap<>();
+    /** The chunks last read for each land, by land id and dimension key. */
+    private final Map<Integer, Map<String, Set<Long>>> landChunks = new HashMap<>();
+    /** Chunk count at the last read, for the cheap periodic check. */
+    private final Map<Integer, Integer> landChunkCounts = new HashMap<>();
+    private final Map<Integer, ULID> ulidsById = new HashMap<>();
+
     /** What each mod client was last told about the lands. */
     private final Map<UUID, Map<Integer, LandInfo>> sentLands = new HashMap<>();
     /** Mod clients that said hello but have not registered their channels yet. */
     private final Set<UUID> waitingForChannels = new HashSet<>();
-    private boolean dirty = true;
+    private final Map<UUID, String> ownerNames = new HashMap<>();
+
+    // Lands may fire events off the main thread, so these two are written concurrently.
+    private final Set<ULID> changedLands = ConcurrentHashMap.newKeySet();
+    private volatile boolean infosChanged;
 
     private static final Set<String> SYNC_CHANNELS = Set.of(Protocol.HELLO, Protocol.LANDS, Protocol.CHUNKS);
 
@@ -53,8 +61,39 @@ final class ClaimSync {
         this.lands = lands;
     }
 
-    void markDirty() {
-        dirty = true;
+    /** The land's chunks (and maybe its name or members) changed. */
+    void landChanged(Land land) {
+        if (land != null) {
+            changedLands.add(land.getULID());
+        }
+        infosChanged = true;
+    }
+
+    /** Names, relations or wars changed, but no chunks. */
+    void infosChanged() {
+        infosChanged = true;
+    }
+
+    /**
+     * Catches changes Lands sends no event for. Compares chunk counts only, which is cheap, and
+     * marks lands that differ (or appeared or vanished) for a full read.
+     */
+    void checkAll() {
+        Set<Integer> seen = new HashSet<>();
+        for (Land land : lands.getLands()) {
+            int id = landId(land);
+            seen.add(id);
+            Integer count = landChunkCounts.get(id);
+            if (count == null || count != land.getChunksAmount()) {
+                changedLands.add(land.getULID());
+            }
+        }
+        for (Integer id : landChunks.keySet()) {
+            if (!seen.contains(id)) {
+                changedLands.add(ulidsById.get(id));
+            }
+        }
+        infosChanged = true;
     }
 
     void forget(Player player) {
@@ -86,9 +125,7 @@ final class ClaimSync {
     }
 
     private void startSync(Player player) {
-        if (dirty) {
-            flush();
-        }
+        flush();
         send(player, Protocol.HELLO, new Protocol.Welcome(Protocol.VERSION, plugin.maxClaimArea()).encode());
 
         Map<Integer, LandInfo> infos = landInfos(player.getUniqueId());
@@ -101,47 +138,89 @@ final class ClaimSync {
     }
 
     int landId(Land land) {
-        return landIds.computeIfAbsent(land.getULID(), ulid -> nextLandId++);
+        return landIds.computeIfAbsent(land.getULID(), ulid -> {
+            int id = nextLandId++;
+            ulidsById.put(id, ulid);
+            return id;
+        });
     }
 
     /** Runs every few ticks; does nothing unless a change was flagged. */
     void flush() {
-        if (!dirty) {
-            return;
+        Map<String, Map<Long, Integer>> changes = new HashMap<>();
+        if (!changedLands.isEmpty()) {
+            List<ULID> pending = new ArrayList<>(changedLands);
+            Map<ULID, Map<String, Set<Long>>> reads = new HashMap<>();
+            try {
+                for (ULID ulid : pending) {
+                    Land land = lands.getLandByULID(ulid);
+                    reads.put(ulid, land == null ? Map.of() : readChunks(land));
+                }
+            } catch (ConcurrentModificationException e) {
+                // Lands changes claims off the main thread; try again on the next run.
+                return;
+            }
+            pending.forEach(changedLands::remove);
+            reads.forEach((ulid, after) -> apply(landIds.get(ulid), after, changes));
         }
-        Map<String, Map<Long, Integer>> current;
-        try {
-            current = snapshotChunks();
-        } catch (ConcurrentModificationException e) {
-            // Lands changes claims off the main thread; try again on the next run.
-            return;
-        }
-        dirty = false;
+
         List<Player> clients = clients();
         if (!clients.isEmpty()) {
-            for (String dimension : union(current.keySet(), chunks.keySet())) {
-                Map<Long, Integer> before = chunks.getOrDefault(dimension, Map.of());
-                Map<Long, Integer> after = current.getOrDefault(dimension, Map.of());
-                Map<Long, Integer> changes = new HashMap<>();
-                after.forEach((pos, id) -> {
-                    if (!id.equals(before.get(pos))) {
-                        changes.put(pos, id);
-                    }
-                });
-                before.keySet().forEach(pos -> {
-                    if (!after.containsKey(pos)) {
-                        changes.put(pos, Protocol.NO_LAND);
-                    }
-                });
-                if (!changes.isEmpty()) {
-                    sendChunks(clients, dimension, false, changes);
+            changes.forEach((dimension, entries) -> sendChunks(clients, dimension, false, entries));
+            if (infosChanged) {
+                for (Player player : clients) {
+                    sendLandChanges(player);
                 }
             }
-            for (Player player : clients) {
-                sendLandChanges(player);
+        }
+        infosChanged = false;
+    }
+
+    /** Stores a land's fresh chunks and records what changed per dimension. */
+    private void apply(Integer id, Map<String, Set<Long>> after, Map<String, Map<Long, Integer>> changes) {
+        if (id == null) {
+            return;
+        }
+        Map<String, Set<Long>> before = landChunks.getOrDefault(id, Map.of());
+        for (String dimension : union(before.keySet(), after.keySet())) {
+            Set<Long> old = before.getOrDefault(dimension, Set.of());
+            Set<Long> now = after.getOrDefault(dimension, Set.of());
+            Map<Long, Integer> owners = chunks.computeIfAbsent(dimension, key -> new HashMap<>());
+            Map<Long, Integer> dimChanges = changes.computeIfAbsent(dimension, key -> new HashMap<>());
+            for (long pos : old) {
+                // Another land may have taken the chunk already in this same flush.
+                if (!now.contains(pos) && owners.remove(pos, id)) {
+                    dimChanges.put(pos, Protocol.NO_LAND);
+                }
+            }
+            for (long pos : now) {
+                if (!id.equals(owners.put(pos, id))) {
+                    dimChanges.put(pos, id);
+                }
             }
         }
-        chunks = current;
+        if (after.isEmpty() && lands.getLandByULID(ulidsById.get(id)) == null) {
+            landChunks.remove(id);
+            landChunkCounts.remove(id);
+        } else {
+            landChunks.put(id, after);
+            landChunkCounts.put(id, after.values().stream().mapToInt(Set::size).sum());
+        }
+    }
+
+    private static Map<String, Set<Long>> readChunks(Land land) {
+        Map<String, Set<Long>> result = new HashMap<>();
+        for (Container container : land.getContainers()) {
+            World world = container.getWorld().getWorld();
+            if (world == null) {
+                continue;
+            }
+            Set<Long> dimension = result.computeIfAbsent(dimensionKey(world), key -> new HashSet<>());
+            for (ChunkCoordinate chunk : container.getChunks()) {
+                dimension.add(pack(chunk.getX(), chunk.getZ()));
+            }
+        }
+        return result;
     }
 
     private void sendLandChanges(Player player) {
@@ -158,24 +237,6 @@ final class ClaimSync {
         if (!changed.isEmpty() || removed.length > 0) {
             send(player, Protocol.LANDS, new Protocol.LandsUpdate(false, changed, removed).encode());
         }
-    }
-
-    private Map<String, Map<Long, Integer>> snapshotChunks() {
-        Map<String, Map<Long, Integer>> result = new HashMap<>();
-        for (Land land : lands.getLands()) {
-            int id = landId(land);
-            for (Container container : land.getContainers()) {
-                World world = container.getWorld().getWorld();
-                if (world == null) {
-                    continue;
-                }
-                Map<Long, Integer> dimension = result.computeIfAbsent(dimensionKey(world), key -> new HashMap<>());
-                for (ChunkCoordinate chunk : container.getChunks()) {
-                    dimension.put(pack(chunk.getX(), chunk.getZ()), id);
-                }
-            }
-        }
-        return result;
     }
 
     private Map<Integer, LandInfo> landInfos(UUID viewer) {
@@ -209,15 +270,26 @@ final class ClaimSync {
         return result;
     }
 
-    private static String ownerName(UUID owner) {
+    private String ownerName(UUID owner) {
         if (owner == null) {
             return "";
         }
-        OfflinePlayer player = Bukkit.getOfflinePlayer(owner);
-        return Objects.requireNonNullElse(player.getName(), "");
+        String cached = ownerNames.get(owner);
+        if (cached != null) {
+            return cached;
+        }
+        String name = Bukkit.getOfflinePlayer(owner).getName();
+        if (name == null) {
+            return "";
+        }
+        ownerNames.put(owner, name);
+        return name;
     }
 
     private void sendChunks(List<Player> targets, String dimension, boolean reset, Map<Long, Integer> entries) {
+        if (!reset && entries.isEmpty()) {
+            return;
+        }
         List<Map.Entry<Long, Integer>> list = new ArrayList<>(entries.entrySet());
         int offset = 0;
         do {

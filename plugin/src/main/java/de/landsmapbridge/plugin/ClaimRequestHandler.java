@@ -136,7 +136,7 @@ final class ClaimRequestHandler {
 
     private void finish(Player player, Land land, boolean unclaim, int done, int total) {
         busy.remove(player.getUniqueId());
-        sync.markDirty();
+        sync.landChanged(land);
         if (!player.isOnline()) {
             return;
         }

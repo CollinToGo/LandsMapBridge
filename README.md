@@ -45,7 +45,8 @@ You can only claim in the dimension you are currently in.
 # Largest rectangle (in chunks) a player may claim or unclaim at once from the map.
 max-claim-area: 256
 
-# Full re-check of all claims, catches changes Lands sends no event for.
+# How often to compare each land's chunk count, catches changes Lands sends no event for.
+# Only lands whose count changed are read again.
 resync-seconds: 30
 ```
 
@@ -62,5 +63,5 @@ Requires nothing but a JDK; Gradle downloads Java 25 by itself.
 ## How it works
 
 - `common/` holds the small wire protocol shared by both sides (plain plugin messages on `landsmapbridge:*` channels).
-- The plugin keeps a snapshot of all claims and sends only the differences to mod clients.
+- The plugin keeps a copy of all claims. When Lands reports a change it reads only that land again and sends the difference to mod clients.
 - The mod hooks a highlighter into Xaero's minimap and world map (the same system Open Parties and Claims uses) and adds its options to the world map's right-click menu.
