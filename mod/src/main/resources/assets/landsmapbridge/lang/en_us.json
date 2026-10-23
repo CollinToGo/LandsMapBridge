@@ -1,0 +1,9 @@
+{
+	"gui.landsmapbridge.claim": "Lands: Claim %s chunk(s)",
+	"gui.landsmapbridge.claim.confirm_title": "Claim chunks",
+	"gui.landsmapbridge.claim.confirm": "Claim %s chunk(s) for the land you edit (/lands edit)? Lands rules and costs apply.",
+	"gui.landsmapbridge.unclaim": "Lands: Unclaim %s chunk(s)",
+	"gui.landsmapbridge.unclaim.confirm_title": "Unclaim chunks",
+	"gui.landsmapbridge.unclaim.confirm": "Unclaim the chunks of the land you edit (/lands edit) in this selection of %s chunk(s)?",
+	"gui.landsmapbridge.too_large": "Lands: Selection too large (%s, max %s)"
+}

@@ -1,0 +1,13 @@
+{
+	"required": true,
+	"package": "de.landsmapbridge.mixin",
+	"compatibilityLevel": "JAVA_25",
+	"client": [
+		"GuiMapMixin",
+		"MinimapSessionMixin",
+		"WorldMapSessionMixin"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	}
+}

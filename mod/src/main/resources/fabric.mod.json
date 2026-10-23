@@ -1,0 +1,29 @@
+{
+	"schemaVersion": 1,
+	"id": "landsmapbridge",
+	"version": "${version}",
+	"name": "Lands Map Bridge",
+	"description": "Shows Lands claims on Xaero's Minimap and World Map and lets you claim or unclaim chunks from the world map.",
+	"authors": [
+		"Collin"
+	],
+	"license": "All-Rights-Reserved",
+	"icon": "assets/landsmapbridge/icon.png",
+	"environment": "client",
+	"entrypoints": {
+		"client": [
+			"de.landsmapbridge.LandsMapBridge"
+		]
+	},
+	"mixins": [
+		"landsmapbridge.mixins.json"
+	],
+	"depends": {
+		"fabricloader": ">=0.20.1",
+		"minecraft": "~26.3",
+		"java": ">=25",
+		"fabric-api": "*",
+		"xaerominimap": "*",
+		"xaeroworldmap": "*"
+	}
+}
