@@ -6,8 +6,8 @@ It has two parts:
 
 | Part | Runs on | File |
 |------|---------|------|
-| Fabric mod | Client (Minecraft 26.3) | `mod/build/libs/landsmapbridge-fabric-<version>.jar` |
-| Paper plugin | Server (Paper 26.3 with Lands) | `plugin/build/libs/landsmapbridge-paper-<version>.jar` |
+| Fabric mod | Client (Minecraft 26.3) | `landsmapbridge-fabric-<version>.jar` |
+| Paper plugin | Server (Paper 26.3 with Lands) | `landsmapbridge-paper-<version>.jar` |
 
 The mod is optional for players: anyone can join the server without it. The plugin only talks to clients that have the mod.
 
@@ -50,16 +50,6 @@ max-claim-area: 256
 resync-seconds: 30
 ```
 
-## Building
-
-Requires nothing but a JDK; Gradle downloads Java 25 by itself.
-
-```bash
-./gradlew build
-```
-
-`./gradlew :mod:runClient` starts a development client with both Xaero maps.
-
 ## How it works
 
 - `common/` holds the small wire protocol shared by both sides (plain plugin messages on `landsmapbridge:*` channels).
@@ -70,4 +60,4 @@ Requires nothing but a JDK; Gradle downloads Java 25 by itself.
 
 MIT, see [LICENSE](LICENSE).
 
-This project contains no code from Lands or Xaero's maps. Lands is a paid plugin: every server needs its own Lands license. Xaero's Minimap and World Map are downloaded from Modrinth when building.
+This project contains no code from Lands or Xaero's maps. Lands is a paid plugin: every server needs its own Lands license. Xaero's Minimap and World Map are separate projects and are not included.
